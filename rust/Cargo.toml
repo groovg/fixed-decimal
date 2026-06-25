@@ -1,0 +1,14 @@
+[package]
+name = "fixed-decimal"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.79"
+license = "MIT"
+description = "Exact fixed-point decimal arithmetic for prices and quantities (no floating point)"
+repository = "https://github.com/groovg/fixed-decimal"
+readme = "README.md"
+keywords = ["fixed-point", "decimal", "money", "trading", "hft"]
+categories = ["mathematics", "no-std", "data-structures"]
+
+[lib]
+name = "fixed_decimal"
