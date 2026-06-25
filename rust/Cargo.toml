@@ -2,7 +2,7 @@
 name = "fixed-decimal"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.79"
+rust-version = "1.81"
 license = "MIT"
 description = "Exact fixed-point decimal arithmetic for prices and quantities (no floating point)"
 repository = "https://github.com/groovg/fixed-decimal"

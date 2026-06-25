@@ -482,6 +482,144 @@ impl Notional {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ParseError {
+    Empty,
+    InvalidChar,
+    Overflow,
+    TooManyDigits,
+}
+
+impl core::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            ParseError::Empty => "empty input",
+            ParseError::InvalidChar => "invalid character",
+            ParseError::Overflow => "value out of range",
+            ParseError::TooManyDigits => "more fraction digits than the scale allows",
+        })
+    }
+}
+
+impl core::error::Error for ParseError {}
+
+impl<const SCALE: u32, Unit, Repr: Mantissa> Fixed<SCALE, Unit, Repr> {
+    // Inherent twin of FromStr so callers can parse without importing the trait.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Result<Self, ParseError> {
+        Self::parse(s, Round::HalfEven, false)
+    }
+
+    pub fn from_str_rounded(s: &str, mode: Round) -> Result<Self, ParseError> {
+        Self::parse(s, mode, false)
+    }
+
+    pub fn from_str_exact(s: &str) -> Result<Self, ParseError> {
+        Self::parse(s, Round::HalfEven, true)
+    }
+
+    fn parse(s: &str, mode: Round, exact: bool) -> Result<Self, ParseError> {
+        let b = s.as_bytes();
+        if b.is_empty() {
+            return Err(ParseError::Empty);
+        }
+        let mut i = 0;
+        let neg = match b[0] {
+            b'+' => {
+                i = 1;
+                false
+            }
+            b'-' => {
+                i = 1;
+                true
+            }
+            _ => false,
+        };
+
+        let mut digits: i128 = 0;
+        let mut int_digits = 0usize;
+        while i < b.len() && b[i].is_ascii_digit() {
+            digits = digits
+                .checked_mul(10)
+                .and_then(|d| d.checked_add((b[i] - b'0') as i128))
+                .ok_or(ParseError::Overflow)?;
+            int_digits += 1;
+            i += 1;
+        }
+
+        let mut frac_digits = 0usize;
+        if i < b.len() && b[i] == b'.' {
+            i += 1;
+            let frac_start = i;
+            while i < b.len() && b[i].is_ascii_digit() {
+                digits = digits
+                    .checked_mul(10)
+                    .and_then(|d| d.checked_add((b[i] - b'0') as i128))
+                    .ok_or(ParseError::Overflow)?;
+                frac_digits += 1;
+                i += 1;
+            }
+            if i == frac_start {
+                return Err(ParseError::InvalidChar);
+            }
+        }
+
+        if i != b.len() || int_digits == 0 {
+            return Err(ParseError::InvalidChar);
+        }
+
+        let signed = if neg { -digits } else { digits };
+        let target = SCALE as usize;
+        let mantissa = if frac_digits <= target {
+            signed
+                .checked_mul(POW10[target - frac_digits])
+                .ok_or(ParseError::Overflow)?
+        } else {
+            let divisor = POW10[frac_digits - target];
+            if exact && digits % divisor != 0 {
+                return Err(ParseError::TooManyDigits);
+            }
+            div_round(signed, divisor, mode)
+        };
+
+        Repr::from_i128(mantissa)
+            .map(Self::from_raw)
+            .ok_or(ParseError::Overflow)
+    }
+}
+
+impl<const SCALE: u32, Unit, Repr: Mantissa> core::str::FromStr for Fixed<SCALE, Unit, Repr> {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        Self::parse(s, Round::HalfEven, false)
+    }
+}
+
+impl<const SCALE: u32, Unit, Repr: Mantissa> core::fmt::Display for Fixed<SCALE, Unit, Repr> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let m = self.mantissa.to_i128();
+        let magnitude = m.unsigned_abs();
+        let factor = POW10[SCALE as usize] as u128;
+        if m < 0 {
+            f.write_str("-")?;
+        }
+        write!(f, "{}", magnitude / factor)?;
+        if SCALE > 0 {
+            f.write_str(".")?;
+            let mut buf = [b'0'; 39];
+            let mut frac = magnitude % factor;
+            let mut idx = SCALE as usize;
+            while idx > 0 {
+                idx -= 1;
+                buf[idx] = b'0' + (frac % 10) as u8;
+                frac /= 10;
+            }
+            f.write_str(core::str::from_utf8(&buf[..SCALE as usize]).unwrap())?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,6 +773,82 @@ mod tests {
         assert_eq!(p2.raw(), 125);
         let back: Price = p2.checked_rescale::<9>().unwrap();
         assert_eq!(back, p);
+    }
+
+    #[test]
+    fn parse_accepts_and_normalizes() {
+        assert_eq!(Price::from_str("0.1").unwrap().raw(), 100_000_000);
+        assert_eq!(Price::from_str("0.2").unwrap().raw(), 200_000_000);
+        // 0.1 + 0.2 == 0.3 exactly
+        let sum = Price::from_str("0.1").unwrap() + Price::from_str("0.2").unwrap();
+        assert_eq!(sum, Price::from_str("0.3").unwrap());
+
+        assert_eq!(Price::from_str("007.50").unwrap().raw(), 7_500_000_000);
+        assert_eq!(Price::from_str("1.2500").unwrap().raw(), 1_250_000_000);
+        assert_eq!(Price::from_str("+5").unwrap().raw(), 5_000_000_000);
+        assert_eq!(Price::from_str("-3.25").unwrap().raw(), -3_250_000_000);
+        for z in ["0", "-0", "+0", "-0.0", "0.000"] {
+            assert_eq!(Price::from_str(z).unwrap().raw(), 0, "{z}");
+        }
+    }
+
+    #[test]
+    fn parse_rounds_excess_digits_half_even() {
+        let two = Decimal::<2>::from_str("1.005").unwrap();
+        assert_eq!(two.raw(), 100); // 1.005 -> 1.00
+        let two_b = Decimal::<2>::from_str("1.015").unwrap();
+        assert_eq!(two_b.raw(), 102); // 1.015 -> 1.02
+                                      // exact mode rejects a dropped non-zero digit
+        assert_eq!(
+            Decimal::<2>::from_str_exact("1.005"),
+            Err(ParseError::TooManyDigits)
+        );
+        assert_eq!(Decimal::<2>::from_str_exact("1.230").unwrap().raw(), 123);
+    }
+
+    #[test]
+    fn parse_rejects_bad_input() {
+        for bad in [
+            "", ".", "+", "-", "1.", ".5", " 1.5", "1.5 ", "1,000", "1e9", "1.2.3", "1.2x",
+        ] {
+            assert!(Price::from_str(bad).is_err(), "should reject {bad:?}");
+        }
+        assert_eq!(Price::from_str(""), Err(ParseError::Empty));
+        assert_eq!(Price::from_str("99999999999.0"), Err(ParseError::Overflow));
+    }
+
+    #[test]
+    fn format_is_fixed_width_and_round_trips() {
+        assert_eq!(
+            Price::try_from_parts(1, 250_000_000).unwrap().to_string(),
+            "1.250000000"
+        );
+        assert_eq!(Price::ZERO.to_string(), "0.000000000");
+        assert_eq!(
+            Price::try_from_parts(-1, 250_000_000).unwrap().to_string(),
+            "-1.250000000"
+        );
+        // never negative zero
+        assert!(!Price::ZERO.to_string().starts_with('-'));
+
+        for raw in [
+            0i64,
+            1,
+            -1,
+            5,
+            -5,
+            1_250_000_000,
+            -9_223_372_036,
+            i64::MAX,
+            i64::MIN + 1,
+        ] {
+            let x = Price::from_raw(raw);
+            assert_eq!(
+                Price::from_str(&x.to_string()).unwrap(),
+                x,
+                "round-trip {raw}"
+            );
+        }
     }
 
     #[test]
