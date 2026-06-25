@@ -14,6 +14,7 @@ pub enum Round {
     Ceil,
 }
 
+#[inline]
 pub fn div_round(num: i128, den: i128, mode: Round) -> i128 {
     debug_assert!(den != 0, "div_round: division by zero");
     let sign = num.signum() * den.signum();
@@ -990,6 +991,35 @@ mod tests {
                 let oracle = div_round(a as i128 * b as i128, POW10[9], Round::HalfEven);
                 assert_eq!(got, oracle, "{a} * {b}");
             }
+        }
+    }
+
+    #[test]
+    fn property_round_trip_and_mul_vs_oracle() {
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for _ in 0..200_000 {
+            let x = Price::from_raw(next() as i64);
+            assert_eq!(Price::from_str(&x.to_string()).unwrap(), x);
+        }
+
+        for _ in 0..200_000 {
+            let a = (next() as i64) >> 1;
+            let b = (next() as i64) >> 1;
+            let got = Decimal::<9>::from_raw(a).checked_mul(Decimal::<9>::from_raw(b));
+            let oracle = <i64 as Mantissa>::from_i128(div_round(
+                a as i128 * b as i128,
+                POW10[9],
+                Round::HalfEven,
+            ))
+            .map(Decimal::<9>::from_raw);
+            assert_eq!(got, oracle, "{a} * {b}");
         }
     }
 }

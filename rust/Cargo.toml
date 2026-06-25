@@ -12,3 +12,15 @@ categories = ["mathematics", "no-std", "data-structures"]
 
 [lib]
 name = "fixed_decimal"
+
+[dev-dependencies]
+criterion = "0.5"
+rust_decimal = "1"
+
+[[bench]]
+name = "decimal"
+harness = false
+
+[profile.bench]
+lto = true
+codegen-units = 1
