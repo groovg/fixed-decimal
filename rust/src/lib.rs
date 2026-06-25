@@ -588,6 +588,73 @@ impl<const SCALE: u32, Unit, Repr: Mantissa> Fixed<SCALE, Unit, Repr> {
     }
 }
 
+impl<const SCALE: u32, Unit, Repr: Mantissa> Fixed<SCALE, Unit, Repr> {
+    pub fn round_to_tick_round(self, tick: Self, mode: Round) -> Option<Self> {
+        let t = tick.mantissa.to_i128();
+        if t <= 0 {
+            return None;
+        }
+        let q = div_round(self.mantissa.to_i128(), t, mode);
+        Repr::from_i128(q.checked_mul(t)?).map(Self::from_raw)
+    }
+
+    pub fn round_to_tick(self, tick: Self) -> Option<Self> {
+        self.round_to_tick_round(tick, Round::HalfEven)
+    }
+
+    pub fn floor_to_tick(self, tick: Self) -> Option<Self> {
+        self.round_to_tick_round(tick, Round::Floor)
+    }
+
+    pub fn ceil_to_tick(self, tick: Self) -> Option<Self> {
+        self.round_to_tick_round(tick, Round::Ceil)
+    }
+
+    pub fn is_on_tick(self, tick: Self) -> bool {
+        let t = tick.mantissa.to_i128();
+        t > 0 && self.mantissa.to_i128() % t == 0
+    }
+
+    pub fn next_tick(self, tick: Self) -> Option<Self> {
+        let t = tick.mantissa.to_i128();
+        if t <= 0 {
+            return None;
+        }
+        let q = div_round(self.mantissa.to_i128(), t, Round::Floor);
+        Repr::from_i128(q.checked_add(1)?.checked_mul(t)?).map(Self::from_raw)
+    }
+
+    pub fn prev_tick(self, tick: Self) -> Option<Self> {
+        let t = tick.mantissa.to_i128();
+        if t <= 0 {
+            return None;
+        }
+        let q = div_round(self.mantissa.to_i128(), t, Round::Ceil);
+        Repr::from_i128(q.checked_sub(1)?.checked_mul(t)?).map(Self::from_raw)
+    }
+
+    pub fn ticks_between(self, other: Self, tick: Self) -> Option<i64> {
+        let t = tick.mantissa.to_i128();
+        if t <= 0 {
+            return None;
+        }
+        let delta = other.mantissa.to_i128() - self.mantissa.to_i128();
+        if delta % t != 0 {
+            return None;
+        }
+        i64::try_from(delta / t).ok()
+    }
+
+    pub fn ticks_between_trunc(self, other: Self, tick: Self) -> Option<i64> {
+        let t = tick.mantissa.to_i128();
+        if t <= 0 {
+            return None;
+        }
+        let delta = other.mantissa.to_i128() - self.mantissa.to_i128();
+        i64::try_from(delta / t).ok()
+    }
+}
+
 impl<const SCALE: u32, Unit, Repr: Mantissa> core::str::FromStr for Fixed<SCALE, Unit, Repr> {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, ParseError> {
@@ -849,6 +916,67 @@ mod tests {
                 "round-trip {raw}"
             );
         }
+    }
+
+    #[test]
+    fn tick_rounding_and_distance() {
+        let tick = Price::from_str("0.25").unwrap();
+        assert_eq!(
+            Price::from_str("10.07")
+                .unwrap()
+                .round_to_tick(tick)
+                .unwrap(),
+            Price::from_str("10.00").unwrap()
+        );
+        assert_eq!(
+            Price::from_str("10.13")
+                .unwrap()
+                .round_to_tick(tick)
+                .unwrap(),
+            Price::from_str("10.25").unwrap()
+        );
+        let p = Price::from_str("10.13").unwrap();
+        assert_eq!(
+            p.floor_to_tick(tick).unwrap(),
+            Price::from_str("10.00").unwrap()
+        );
+        assert_eq!(
+            p.ceil_to_tick(tick).unwrap(),
+            Price::from_str("10.25").unwrap()
+        );
+
+        // negatives are directional toward -inf / +inf
+        let n = Price::from_str("-10.07").unwrap();
+        assert_eq!(
+            n.floor_to_tick(tick).unwrap(),
+            Price::from_str("-10.25").unwrap()
+        );
+        assert_eq!(
+            n.ceil_to_tick(tick).unwrap(),
+            Price::from_str("-10.00").unwrap()
+        );
+
+        assert!(Price::from_str("10.25").unwrap().is_on_tick(tick));
+        assert!(!Price::from_str("10.13").unwrap().is_on_tick(tick));
+        assert_eq!(
+            Price::from_str("10.00").unwrap().next_tick(tick).unwrap(),
+            Price::from_str("10.25").unwrap()
+        );
+
+        let a = Price::from_str("10.00").unwrap();
+        let b = Price::from_str("10.75").unwrap();
+        assert_eq!(a.ticks_between(b, tick), Some(3));
+        // off-grid endpoint -> None
+        assert_eq!(
+            a.ticks_between(Price::from_str("10.10").unwrap(), tick),
+            None
+        );
+        assert_eq!(
+            a.ticks_between_trunc(Price::from_str("10.10").unwrap(), tick),
+            Some(0)
+        );
+        // tick must be positive
+        assert_eq!(a.round_to_tick(Price::ZERO), None);
     }
 
     #[test]
