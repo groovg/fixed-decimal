@@ -371,6 +371,117 @@ impl<const SCALE: u32, Unit, Repr: Mantissa> Div<i64> for Fixed<SCALE, Unit, Rep
     }
 }
 
+impl<const SCALE: u32, Unit, Repr: Mantissa> Fixed<SCALE, Unit, Repr> {
+    pub fn checked_rescale_round<const TO: u32>(
+        self,
+        mode: Round,
+    ) -> Option<Fixed<TO, Unit, Repr>> {
+        let m = self.mantissa.to_i128();
+        let rescaled = if TO >= SCALE {
+            m.checked_mul(POW10[(TO - SCALE) as usize])?
+        } else {
+            div_round(m, POW10[(SCALE - TO) as usize], mode)
+        };
+        Repr::from_i128(rescaled).map(Fixed::<TO, Unit, Repr>::from_raw)
+    }
+
+    pub fn checked_rescale<const TO: u32>(self) -> Option<Fixed<TO, Unit, Repr>> {
+        self.checked_rescale_round::<TO>(Round::HalfEven)
+    }
+}
+
+impl<const SCALE: u32> Fixed<SCALE, PlainTag, i64> {
+    pub fn checked_mul_round(self, rhs: Self, mode: Round) -> Option<Self> {
+        let product = self.mantissa as i128 * rhs.mantissa as i128;
+        let m = div_round(product, POW10[SCALE as usize], mode);
+        <i64 as Mantissa>::from_i128(m).map(Self::from_raw)
+    }
+
+    pub fn checked_mul(self, rhs: Self) -> Option<Self> {
+        self.checked_mul_round(rhs, Round::HalfEven)
+    }
+
+    // No `Mul`/`Div` operators: a value-losing product must name its rounding mode.
+    #[allow(clippy::should_implement_trait)]
+    pub fn mul(self, rhs: Self) -> Self {
+        self.checked_mul(rhs).expect("fixed-decimal: mul overflow")
+    }
+
+    pub fn checked_div_round(self, rhs: Self, mode: Round) -> Option<Self> {
+        if rhs.mantissa == 0 {
+            return None;
+        }
+        let num = (self.mantissa as i128).checked_mul(POW10[SCALE as usize])?;
+        let m = div_round(num, rhs.mantissa as i128, mode);
+        <i64 as Mantissa>::from_i128(m).map(Self::from_raw)
+    }
+
+    pub fn checked_div(self, rhs: Self) -> Option<Self> {
+        self.checked_div_round(rhs, Round::HalfEven)
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn div(self, rhs: Self) -> Self {
+        self.checked_div(rhs)
+            .expect("fixed-decimal: div overflow or div by zero")
+    }
+}
+
+fn price_times_qty(price_m: i64, qty_m: i64, mode: Round) -> Notional {
+    // scale 9 * scale 9 = scale 18; rescale once to scale 9. The i64*i64 product
+    // fits i128 and notional/1e9 stays well inside i128, so this never overflows.
+    let product = price_m as i128 * qty_m as i128;
+    Notional::from_raw(div_round(product, POW10[9], mode))
+}
+
+impl Price {
+    pub fn mul_qty_round(self, qty: Qty, mode: Round) -> Notional {
+        price_times_qty(self.mantissa, qty.mantissa, mode)
+    }
+
+    pub fn mul_qty(self, qty: Qty) -> Notional {
+        self.mul_qty_round(qty, Round::HalfEven)
+    }
+}
+
+impl Qty {
+    pub fn mul_price_round(self, price: Price, mode: Round) -> Notional {
+        price_times_qty(price.mantissa, self.mantissa, mode)
+    }
+
+    pub fn mul_price(self, price: Price) -> Notional {
+        self.mul_price_round(price, Round::HalfEven)
+    }
+}
+
+impl Notional {
+    pub fn checked_div_price_round(self, price: Price, mode: Round) -> Option<Qty> {
+        if price.mantissa == 0 {
+            return None;
+        }
+        let num = self.mantissa.checked_mul(POW10[9])?;
+        let m = div_round(num, price.mantissa as i128, mode);
+        <i64 as Mantissa>::from_i128(m).map(Qty::from_raw)
+    }
+
+    pub fn checked_div_price(self, price: Price) -> Option<Qty> {
+        self.checked_div_price_round(price, Round::HalfEven)
+    }
+
+    pub fn checked_div_qty_round(self, qty: Qty, mode: Round) -> Option<Price> {
+        if qty.mantissa == 0 {
+            return None;
+        }
+        let num = self.mantissa.checked_mul(POW10[9])?;
+        let m = div_round(num, qty.mantissa as i128, mode);
+        <i64 as Mantissa>::from_i128(m).map(Price::from_raw)
+    }
+
+    pub fn checked_div_qty(self, qty: Qty) -> Option<Price> {
+        self.checked_div_qty_round(qty, Round::HalfEven)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,5 +592,62 @@ mod tests {
         assert_eq!(Price::MAX.saturating_add(Price::from_int(1)), Price::MAX);
         assert_eq!(Price::MIN.saturating_sub(Price::from_int(1)), Price::MIN);
         assert!(Price::MAX.checked_add(Price::from_int(1)).is_none());
+    }
+
+    #[test]
+    fn decimal_mul_div() {
+        let a = Decimal::<2>::try_from_parts(1, 50).unwrap(); // 1.50
+        let b = Decimal::<2>::try_from_parts(2, 0).unwrap(); // 2.00
+        assert_eq!(a.mul(b).raw(), 300); // 3.00
+
+        // 0.1 * 0.2 == 0.02 exactly at scale 9
+        let p = Decimal::<9>::try_from_parts(0, 100_000_000).unwrap();
+        let q = Decimal::<9>::try_from_parts(0, 200_000_000).unwrap();
+        assert_eq!(p.mul(q).raw(), 20_000_000);
+
+        // 0.5 * 0.5 = 0.25 -> 0.2 at scale 1 (HalfEven on the 2.5 tenths)
+        let h = Decimal::<1>::try_from_parts(0, 5).unwrap();
+        assert_eq!(h.mul(h).raw(), 2);
+
+        let six = Decimal::<2>::from_int(6);
+        let four = Decimal::<2>::from_int(4);
+        assert_eq!(six.div(four).raw(), 150); // 1.50
+        assert!(six.checked_div(Decimal::<2>::ZERO).is_none());
+    }
+
+    #[test]
+    fn cross_unit_algebra() {
+        let price = Price::try_from_parts(2, 500_000_000).unwrap(); // 2.5
+        let qty = Qty::from_int(3); // 3.0
+        let notional = price.mul_qty(qty);
+        assert_eq!(notional.raw(), 7_500_000_000); // 7.5
+        assert_eq!(qty.mul_price(price), notional);
+
+        assert_eq!(notional.checked_div_price(price).unwrap(), qty);
+        assert_eq!(notional.checked_div_qty(qty).unwrap(), price);
+        assert!(notional.checked_div_price(Price::ZERO).is_none());
+    }
+
+    #[test]
+    fn rescale_changes_scale() {
+        let p = Price::try_from_parts(1, 250_000_000).unwrap(); // 1.25 @ scale 9
+        let p2: Fixed<2, PriceTag, i64> = p.checked_rescale::<2>().unwrap();
+        assert_eq!(p2.raw(), 125);
+        let back: Price = p2.checked_rescale::<9>().unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn mul_matches_i128_oracle() {
+        let xs = [1i64, 5, 123, -7, 1_000_000_000, -999_999_999, 250_000_000];
+        for &a in &xs {
+            for &b in &xs {
+                let da = Decimal::<9>::from_raw(a);
+                let db = Decimal::<9>::from_raw(b);
+                let got = da.mul(db).raw() as i128;
+                let oracle = div_round(a as i128 * b as i128, POW10[9], Round::HalfEven);
+                assert_eq!(got, oracle, "{a} * {b}");
+            }
+        }
     }
 }
