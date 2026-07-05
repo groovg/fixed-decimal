@@ -13,4 +13,6 @@ if(PROJECT_IS_TOP_LEVEL)
     target_compile_options(fixed_decimal_tests PRIVATE -Wall -Wextra -Werror)
   endif()
   add_test(NAME unit COMMAND fixed_decimal_tests)
+  add_test(NAME conformance
+           COMMAND fixed_decimal_tests ${CMAKE_CURRENT_SOURCE_DIR}/../tests/vectors.csv)
 endif()
