@@ -19,12 +19,23 @@ let notional = price.mul_qty(qty);     // Price * Qty -> Notional, one exact res
 assert_eq!(notional.to_string(), "32500.125000000");
 ```
 
+```cpp
+#include <fixed_decimal.hpp>
+using namespace fixed_decimal;
+
+const auto price = Price::from_string("65000.25").value();
+const auto qty = Qty::from_string("0.5").value();
+const auto notional = price.mul_qty(qty);
+assert(notional.to_string() == "32500.125000000");
+```
+
 ## Layout
 
 | Path    | Language | Status |
 |---------|----------|--------|
-| [`rust/`](rust/) | Rust | implemented ([crate README](rust/README.md)) |
-| `cpp/`  | C++20 | planned — same contract |
+| [`rust/`](rust/) | Rust (1.81+, `no_std`) | implemented ([crate README](rust/README.md)) |
+| [`cpp/`](cpp/)  | C++23, header-only | implemented — same contract |
+| [`tests/vectors.csv`](tests/vectors.csv) | shared | cross-language conformance gate |
 
 Both sides are specified by one shared [`CONTRACT.md`](CONTRACT.md) (representation,
 scale, rounding, overflow, parse/format, ticks) so a value is interpreted identically on
@@ -32,20 +43,43 @@ either side — which is what lets the same raw mantissa cross a shared-memory b
 between a Rust and a C++ process (see the polyglot stack project) and still mean the same
 number.
 
+## Conformance
+
+The contract is enforced, not just documented: `rust/examples/gen_vectors.rs`
+deterministically generates ~1300 golden vectors from the Rust implementation — every
+rounding mode across `div_round`, parse (including every rejection class), format,
+add, mul, div, rescale, `Price×Qty→Notional` and its inverses, and tick arithmetic —
+into [`tests/vectors.csv`](tests/vectors.csv). Both test suites replay the same file;
+CI fails if either side drifts by a single mantissa unit. The C++ side additionally
+pins the unit-safety rules at compile time (`static_assert` over concepts: `Price + Qty`,
+`Price * Price`, cross-scale mixes do not compile).
+
+```sh
+cd rust && cargo test                         # unit + property + conformance
+cmake -S cpp -B cpp/build && cmake --build cpp/build && ctest --test-dir cpp/build
+cd rust && cargo run --example gen_vectors    # regenerate the golden file
+```
+
+The C++ header requires `__int128` (GCC/Clang). MSVC needs a two-limb shim that is not
+written yet — see deferred work.
+
 ## Design (short)
 
 `Fixed<SCALE, Unit, Repr>`: an `i64` mantissa (`i128` for `Notional`) with `value =
 mantissa · 10^-SCALE`. `SCALE` and `Unit` are compile-time, so scale mismatches and
-unit mix-ups (`Price + Qty`, `Price * Price`) are compile errors. Default rounding is
-HalfEven via one shared `div_round` primitive used by arithmetic, parse and ticks alike;
-overflow is checked (operators panic, never wrap). Full rationale is in `CONTRACT.md`.
+unit mix-ups (`Price + Qty`, `Price * Price`) are compile errors — in both languages
+(Rust type system / C++ requires-clauses). Default rounding is HalfEven via one shared
+`div_round` primitive used by arithmetic, parse and ticks alike; overflow is checked
+(`Option` / `std::optional`; operators panic in Rust and throw `std::overflow_error`
+in C++, never wrap). Full rationale is in `CONTRACT.md`.
 
 ## Status / deferred
 
-Rust library is complete (core type, 128-bit mul/div, cross-unit algebra, float-free
-parse/format, tick arithmetic, property tests, benchmark). Tracked follow-ups: the C++
-twin, an MSVC `__int128` shim, a shared `vectors.csv` cross-language conformance gate,
-`trybuild` compile-fail tests, and a `serde` feature.
+Both libraries are complete and conformance-gated. The Rust side additionally has
+property tests (400k iterations) and a benchmark vs `rust_decimal`; the C++ side pins
+unit safety with compile-time asserts. Tracked follow-ups: an MSVC `__int128` shim,
+Rust `trybuild` compile-fail tests (the C++ side already has their `static_assert`
+equivalent), and a `serde` feature.
 
 ## License
 

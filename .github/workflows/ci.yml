@@ -22,3 +22,12 @@ jobs:
       - run: cargo test
       - name: Build no_std (no default std)
         run: cargo build --release
+
+  cpp:
+    name: C++
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build cpp/build
+      - run: ctest --test-dir cpp/build --output-on-failure
