@@ -76,10 +76,12 @@ in C++, never wrap). Full rationale is in `CONTRACT.md`.
 ## Status / deferred
 
 Both libraries are complete and conformance-gated. The Rust side additionally has
-property tests (400k iterations) and a benchmark vs `rust_decimal`; the C++ side pins
-unit safety with compile-time asserts. Tracked follow-ups: an MSVC `__int128` shim,
-Rust `trybuild` compile-fail tests (the C++ side already has their `static_assert`
-equivalent), and a `serde` feature.
+property tests (400k iterations), a benchmark vs `rust_decimal`, compile-fail doctests
+pinning the unit algebra (the C++ side pins the same with `static_assert`), and an
+optional `serde` feature (decimal strings, allocation-free) plus a clearly named
+`to_f64_lossy`. Deliberately not planned: an MSVC `__int128` shim — the C++ header
+targets GCC/Clang and says so up front; two-limb 128-bit emulation is real complexity
+with no consumer to justify it.
 
 ## License
 

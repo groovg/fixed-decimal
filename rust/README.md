@@ -29,6 +29,11 @@ up, and a `Price + Qty` is a compile error. Values are an `i64` mantissa (`i128`
   silent wrap). Multiplication that can round is a named method (`mul`, `mul_qty`), not
   an operator, so the rounding is always explicit.
 - **`no_std`**, `const`-friendly, 8 bytes for `Price`/`Qty`.
+- **Compile-fail doctests** pin the unit algebra: `Price + Qty`, mixed scales, and
+  cross-unit assignment are type errors, and stay that way.
+- **`serde` feature** (off by default): serializes as the exact decimal string
+  (`"1.250000000"`), deserializes with `FromStr` semantics; allocation-free, `no_std`.
+  `to_f64_lossy` is the one explicitly lossy escape hatch.
 
 ## Benchmarks
 
