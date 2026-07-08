@@ -13,9 +13,16 @@ categories = ["mathematics", "no-std", "data-structures"]
 [lib]
 name = "fixed_decimal"
 
+[dependencies]
+serde = { version = "1", default-features = false, optional = true }
+
+[features]
+serde = ["dep:serde"]
+
 [dev-dependencies]
 criterion = "0.5"
 rust_decimal = "1"
+serde_json = "1"
 
 [[bench]]
 name = "decimal"

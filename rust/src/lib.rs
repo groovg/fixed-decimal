@@ -1,3 +1,30 @@
+//! Exact fixed-point decimals for prices and quantities: value = mantissa · 10^-SCALE.
+//!
+//! Cross-unit and cross-scale arithmetic are type errors, pinned here so a refactor
+//! cannot silently reintroduce them:
+//!
+//! ```compile_fail
+//! use fixed_decimal::{Price, Qty};
+//! let _ = Price::from_int(1) + Qty::from_int(1);
+//! ```
+//!
+//! ```compile_fail
+//! use fixed_decimal::{Fixed, PriceTag};
+//! let a: Fixed<9, PriceTag, i64> = Fixed::from_int(1);
+//! let b: Fixed<4, PriceTag, i64> = Fixed::from_int(1);
+//! let _ = a + b;
+//! ```
+//!
+//! ```compile_fail
+//! use fixed_decimal::{Price, Qty};
+//! let p: Price = Qty::from_int(1);
+//! ```
+//!
+//! ```compile_fail
+//! use fixed_decimal::{Price, Qty};
+//! let _: Qty = Price::from_int(2).mul_qty(Price::from_int(3));
+//! ```
+
 #![cfg_attr(not(test), no_std)]
 
 use core::marker::PhantomData;
@@ -519,6 +546,10 @@ impl<const SCALE: u32, Unit, Repr: Mantissa> Fixed<SCALE, Unit, Repr> {
         Self::parse(s, Round::HalfEven, true)
     }
 
+    pub fn to_f64_lossy(self) -> f64 {
+        self.mantissa.to_i128() as f64 / POW10[SCALE as usize] as f64
+    }
+
     fn parse(s: &str, mode: Round, exact: bool) -> Result<Self, ParseError> {
         let b = s.as_bytes();
         if b.is_empty() {
@@ -688,9 +719,99 @@ impl<const SCALE: u32, Unit, Repr: Mantissa> core::fmt::Display for Fixed<SCALE,
     }
 }
 
+#[cfg(feature = "serde")]
+mod serde_impl {
+    use core::fmt::{self, Write};
+    use core::marker::PhantomData;
+
+    use super::{Fixed, Mantissa};
+
+    struct Buf {
+        bytes: [u8; 64],
+        len: usize,
+    }
+
+    impl Write for Buf {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let end = self.len + s.len();
+            if end > self.bytes.len() {
+                return Err(fmt::Error);
+            }
+            self.bytes[self.len..end].copy_from_slice(s.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    impl<const SCALE: u32, Unit, Repr: Mantissa> serde::Serialize for Fixed<SCALE, Unit, Repr> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut buf = Buf {
+                bytes: [0; 64],
+                len: 0,
+            };
+            write!(buf, "{self}").map_err(serde::ser::Error::custom)?;
+            serializer.serialize_str(core::str::from_utf8(&buf.bytes[..buf.len]).unwrap())
+        }
+    }
+
+    impl<'de, const SCALE: u32, Unit, Repr: Mantissa> serde::Deserialize<'de>
+        for Fixed<SCALE, Unit, Repr>
+    {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct V<const SCALE: u32, Unit, Repr>(PhantomData<(Unit, Repr)>);
+
+            impl<const SCALE: u32, Unit, Repr: Mantissa> serde::de::Visitor<'_> for V<SCALE, Unit, Repr> {
+                type Value = Fixed<SCALE, Unit, Repr>;
+
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    write!(f, "a decimal string with at most {SCALE} fractional digits")
+                }
+
+                fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Self::Value, E> {
+                    Fixed::from_str(s).map_err(E::custom)
+                }
+            }
+
+            deserializer.deserialize_str(V(PhantomData))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trips_as_decimal_strings() {
+        let p = Price::try_from_parts(1, 250_000_000).unwrap();
+        assert_eq!(serde_json::to_string(&p).unwrap(), "\"1.250000000\"");
+        assert_eq!(serde_json::from_str::<Price>("\"1.250000000\"").unwrap(), p);
+
+        let n = Notional::from_int(-7);
+        let json = serde_json::to_string(&n).unwrap();
+        assert_eq!(json, "\"-7.000000000\"");
+        assert_eq!(serde_json::from_str::<Notional>(&json).unwrap(), n);
+
+        assert_eq!(
+            serde_json::from_str::<Price>("\"0.0000000005\"").unwrap(),
+            Price::from_str("0.0000000005").unwrap()
+        );
+        assert!(serde_json::from_str::<Price>("\"abc\"").is_err());
+        assert!(serde_json::from_str::<Price>("1.25").is_err());
+    }
+
+    #[test]
+    fn to_f64_lossy_nearest() {
+        assert_eq!(
+            Price::try_from_parts(1, 250_000_000)
+                .unwrap()
+                .to_f64_lossy(),
+            1.25
+        );
+        assert_eq!(Price::from_int(-3).to_f64_lossy(), -3.0);
+        assert_eq!(Price::ZERO.to_f64_lossy(), 0.0);
+    }
 
     #[test]
     fn price_is_eight_bytes() {
