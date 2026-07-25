@@ -79,7 +79,7 @@ Both libraries are complete and conformance-gated. The Rust side additionally ha
 property tests (400k iterations), a benchmark vs `rust_decimal`, compile-fail doctests
 pinning the unit algebra (the C++ side pins the same with `static_assert`), and an
 optional `serde` feature (decimal strings, allocation-free) plus a clearly named
-`to_f64_lossy`. Deliberately not planned: an MSVC `__int128` shim — the C++ header
+`to_f64_lossy`. Deliberately not planned: an MSVC `__int128` shim; the C++ header
 targets GCC/Clang and says so up front; two-limb 128-bit emulation is real complexity
 with no consumer to justify it.
 

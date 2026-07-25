@@ -58,4 +58,4 @@ cargo bench --bench decimal
 ```
 
 See the repository [CONTRACT.md](../CONTRACT.md) for the exact semantics (shared with the
-planned C++ twin) and [README](../README.md) for the project overview.
+C++ twin in [`cpp/`](../cpp/)) and [README](../README.md) for the project overview.

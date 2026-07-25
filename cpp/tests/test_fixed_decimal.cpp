@@ -58,6 +58,9 @@ static void div_round_known_answers() {
     CHECK(div_round(1, 10, Round::Floor) == 0);
     CHECK(div_round(1, 10, Round::Ceil) == 1);
     CHECK(div_round(-1, 10, Round::Ceil) == 0);
+    CHECK(div_round(int128_min, 1, Round::HalfEven) == int128_min);
+    CHECK(div_round(int128_min, 2, Round::HalfEven) == int128_min / 2);
+    CHECK(div_round(int128_min + 1, -1, Round::HalfEven) == int128_max);
 }
 
 static void construction_and_accessors() {

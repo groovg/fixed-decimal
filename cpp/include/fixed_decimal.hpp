@@ -98,7 +98,7 @@ constexpr int128 div_round(int128 num, int128 den, Round mode) {
         case Round::Ceil: away = sign > 0 && r > 0; break;
     }
     const uint128 magnitude = q + (away ? 1 : 0);
-    return sign < 0 ? -static_cast<int128>(magnitude) : static_cast<int128>(magnitude);
+    return sign < 0 ? static_cast<int128>(-magnitude) : static_cast<int128>(magnitude);
 }
 
 enum class ParseError {

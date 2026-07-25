@@ -105,8 +105,7 @@ mantissa overflow. Errors: `Empty, InvalidChar, Overflow, TooManyDigits` (exact 
 Float-free. Emits `-` only when `M < 0`; integer part with no leading zeros (single
 `0` for `|value| < 1`); then, if `SCALE > 0`, `.` and exactly `SCALE` zero-padded
 digits (trailing zeros preserved). `from_str(to_string(x)) == x` for all representable
-`x`. `to_string_trim` strips trailing zeros for display; a no-alloc `write(buf)`
-variant is provided for the hot path.
+`x`.
 
 ## Tick arithmetic
 

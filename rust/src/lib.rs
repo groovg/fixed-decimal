@@ -60,7 +60,11 @@ pub fn div_round(num: i128, den: i128, mode: Round) -> i128 {
         Round::Ceil => sign > 0 && r > 0,
     };
     let magnitude = q + u128::from(away);
-    sign * magnitude as i128
+    if sign < 0 {
+        magnitude.wrapping_neg() as i128
+    } else {
+        magnitude as i128
+    }
 }
 
 const fn make_pow10() -> [i128; 39] {
@@ -890,6 +894,13 @@ mod tests {
         assert_eq!(div_round(1, 2, Round::Floor), 0);
         assert_eq!(div_round(1, 2, Round::Ceil), 1);
         assert_eq!(div_round(-1, 2, Round::Ceil), 0);
+    }
+
+    #[test]
+    fn div_round_i128_min_magnitude() {
+        assert_eq!(div_round(i128::MIN, 1, Round::HalfEven), i128::MIN);
+        assert_eq!(div_round(i128::MIN, 2, Round::HalfEven), i128::MIN / 2);
+        assert_eq!(div_round(i128::MIN + 1, -1, Round::HalfEven), i128::MAX);
     }
 
     #[test]
