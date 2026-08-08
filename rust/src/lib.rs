@@ -433,7 +433,8 @@ impl<const SCALE: u32> Fixed<SCALE, PlainTag, i64> {
         self.checked_mul_round(rhs, Round::HalfEven)
     }
 
-    // No `Mul`/`Div` operators: a value-losing product must name its rounding mode.
+    // No `Mul` between two values: a value-losing product must name its rounding mode.
+    // `Div<i64>` is the one operator that rounds, HalfEven per the contract.
     #[allow(clippy::should_implement_trait)]
     pub fn mul(self, rhs: Self) -> Self {
         self.checked_mul(rhs).expect("fixed-decimal: mul overflow")
